@@ -1,0 +1,39 @@
+name: Setup git credentials
+description: Optionally mint the miningos-read token and rewrite github.com git remotes to authenticated HTTPS. No-op unless enabled=true.
+
+inputs:
+  enabled:
+    description: When 'true', mint the app token and configure git auth for private deps. Otherwise a no-op (public deps clone anonymously).
+    required: false
+    default: 'false'
+  app-id:
+    description: miningos-read GitHub App id/client-id.
+    required: false
+    default: ''
+  private-key:
+    description: miningos-read GitHub App private key.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Generate miningos-read app token
+      id: app-token
+      if: ${{ inputs.enabled == 'true' }}
+      uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+        owner: ${{ github.repository_owner }}
+
+    - name: Configure git url rewrites
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      env:
+        GIT_TOKEN: ${{ steps.app-token.outputs.token }}
+      run: |
+        git config --global url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "git://github.com/"
+        git config --global --add url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+        git config --global --add url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "git@github.com:"
+        git config --global --add url."https://x-access-token:${GIT_TOKEN}@github.com/".insteadOf "https://github.com/"
