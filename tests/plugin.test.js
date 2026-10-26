@@ -451,3 +451,15 @@ test('agent plugin - a disconnect during a pending approval rejects the write at
   t.absent(record.writeInvoked, 'the write never ran')
   t.ok(Date.now() - started < 5000, 'without waiting for the approval timeout')
 })
+
+test('agent plugin - a Gateway token identity ({ kind, sub }) owns its sessions', async (t) => {
+  const record = {}
+  const { create, message } = loadAgentPlugin(PLAIN_TURN, record)
+  const as = (sub, extra = {}) => ({ params: {}, query: {}, body: {}, headers: {}, _info: { kind: 'user', sub }, ...extra })
+
+  const { sessionId } = await create(as('ankit@example.com'))
+  const res = makeRes()
+  await message(as('ankit@example.com', { params: { id: sessionId }, body: { text: 'hi' } }), res)
+  t.is(parseFrames(res).pop().type, 'done')
+  await t.exception(message(as('someone-else', { params: { id: sessionId }, body: { text: 'hi' } }), makeRes()), /ERR_AGENT_SESSION_NOT_FOUND/)
+})

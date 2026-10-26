@@ -72,9 +72,11 @@ MCP tool server run elsewhere.
 | `agent.approval.decide` | `POST /agent/sessions/:id/approvals/:approvalId` | Fail-safe timeout resolves to reject |
 | `agent.session.delete`  | `DELETE /agent/sessions/:id`                     |                                      |
 
-Sessions bind to the caller's identity from `req._info.user`, or to a single `local` operator when the Gateway's `authVerifier`
-stamps none. A session id and its approvals are only reachable by the identity that created them; a foreign id reads as missing
-rather than forbidden, so existence never leaks.
+Sessions bind to the caller's identity: the `kind:sub` of the token the Gateway verified against `spec.rbac` (so a user and a
+service account with the same name never share sessions), else an older `authVerifier`'s `req._info.user`. A Gateway running
+with neither serves a single `local` operator, so every caller shares one identity.
+A session id and its approvals are only reachable by the identity that created them; a foreign id reads as missing rather than
+forbidden, so existence never leaks.
 
 [`tests/plugin.test.js`](tests/plugin.test.js) is the executable spec for this contract: envelope stamping, the approval pause and
 resume order, the timeout-rejects path, and per-identity isolation across sessions and approvals.

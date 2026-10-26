@@ -1,6 +1,6 @@
 {
   "name": "@tetherto/mdk-app-agent",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "MDK agent app: auth-gated chat sessions, SSE streams and approval round-trips behind the Gateway.",
   "author": "Tether",
   "license": "Apache-2.0",
