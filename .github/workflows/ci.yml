@@ -245,8 +245,16 @@ jobs:
           cache-key: ${{ needs.setup.outputs.cache-key }}
           node-version: ${{ env.NODE_VERSION }}
 
+      # `npm run x --if-present` exits 0 when x is missing, so `|| npm test`
+      # would never run; pick the script explicitly instead.
       - name: Test with coverage
-        run: npm run test:coverage --if-present || npm test --if-present
+        shell: bash
+        run: |
+          if [ -n "$(node -p "require('./package.json').scripts?.['test:coverage'] ?? ''")" ]; then
+            npm run test:coverage
+          else
+            npm test --if-present
+          fi
 
       - name: Enforce coverage threshold (>=80%)
         shell: bash
