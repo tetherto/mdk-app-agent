@@ -1,0 +1,493 @@
+name: CI Checks
+
+on:
+  push:
+    branches: [main, develop, staging, "release/**"]
+  pull_request:
+    branches: [main, develop, staging, "release/**"]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "lts/*"
+
+jobs:
+  security_checks:
+    name: 🔐 Security Checks
+    if: github.event_name == 'pull_request' && needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [setup]
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          vulnerability-check: true
+          license-check: true
+
+      - name: Restore dependencies
+        uses: ./.github/actions/node-restore-cache
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+          cache-key: ${{ needs.setup.outputs.cache-key }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Security audit
+        run: |
+          set +e
+          npm audit signatures 2>&1
+          SIGNATURES_EXIT=$?
+          npm audit --audit-level=moderate 2>&1
+          MODERATE_EXIT=$?
+          npm exec --yes -- audit-ci@7 --config "${GITHUB_WORKSPACE}/.github/scripts/audit-ci.jsonc" 2>&1
+          HIGH_EXIT=$?
+          set -e
+
+          [ $SIGNATURES_EXIT -eq 0 ] && SIGNATURES_STATUS="PASS" || SIGNATURES_STATUS="WARN"
+          [ $MODERATE_EXIT -eq 0 ] && MODERATE_STATUS="PASS" || MODERATE_STATUS="WARN"
+          [ $HIGH_EXIT -eq 0 ] && HIGH_STATUS="PASS" || HIGH_STATUS="WARN"
+
+          AUD_JSON="${RUNNER_TEMP:-/tmp}/npm-audit.json"
+          npm audit --json > "${AUD_JSON}" 2>/dev/null || true
+
+          {
+            echo "## Security Audit Summary"
+            echo ""
+            echo "| Scope | Signatures Audit | Moderate Audit | High/Critical (audit-ci) | Gate |"
+            echo "|---|---|---|---|---|"
+            echo "| Repo | ${SIGNATURES_STATUS} | ${MODERATE_STATUS} | ${HIGH_STATUS} | High/Critical (audit-ci + allowlist) |"
+            echo ""
+            echo "High/Critical gate uses \`audit-ci\` with \`.github/scripts/audit-ci.jsonc\`."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          bash "${GITHUB_WORKSPACE}/.github/scripts/github-summary-npm-audit-high-critical.sh" "${AUD_JSON}" >> "$GITHUB_STEP_SUMMARY" || true
+          {
+            echo ""
+            echo "**Note:** Package rows are from **\`npm audit --json\`**. Job success still depends on **audit-ci**; allowlisted GHSA IDs may remain listed."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ $SIGNATURES_EXIT -ne 0 ]; then
+            echo "::warning::npm audit signatures reported issues"
+          fi
+          if [ $MODERATE_EXIT -ne 0 ]; then
+            echo "::warning::npm audit reported moderate-level issues"
+          fi
+          if [ $HIGH_EXIT -ne 0 ]; then
+            echo "::error::audit-ci reported high/critical issues (see .github/scripts/audit-ci.jsonc allowlist)"
+          fi
+
+          [ $HIGH_EXIT -eq 0 ]
+
+  setup:
+    name: 📦 Setup Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      cache-key: ${{ steps.setup-deps.outputs.cache-key }}
+      lockfile-outcome: ${{ steps.lockfile.outcome }}
+      has-package: ${{ steps.detect.outputs.has-package }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # New MDK app repos start empty. Until a package.json lands, skip the
+      # Node pipeline so CI Success still reports instead of failing setup.
+      - name: Detect package.json
+        id: detect
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "has-package=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-package=false" >> "$GITHUB_OUTPUT"
+            echo "No package.json; skipping Node setup, security audit, lint, typecheck, test and build."
+          fi
+
+      # Private cross-repo git dependencies (now that miningos-* repos are
+      # private) cannot be cloned with the repo-scoped GITHUB_TOKEN. Mint a
+      # short-lived token from the miningos-read GitHub App and configure git
+      # to use it before any npm install resolves those dependencies.
+      - name: Configure git auth for private dependencies
+        if: steps.detect.outputs.has-package == 'true'
+        uses: ./.github/actions/setup-git-credentials
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+
+      - name: Setup runtime
+        if: steps.detect.outputs.has-package == 'true'
+        uses: ./.github/actions/setup-runtime
+        with:
+          node_version: ${{ env.NODE_VERSION }}
+          package_manager: npm
+          cache_dependency_path: package-lock.json
+
+      - name: Lockfile consistency check
+        if: steps.detect.outputs.has-package == 'true'
+        id: lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f package-lock.json ]; then
+            echo "No package-lock.json; skipping lockfile check"
+            exit 0
+          fi
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          git diff --exit-code package-lock.json || (
+            echo "::error::package-lock.json is out of sync with package.json."
+            echo "::error::Regenerate with: npm install --package-lock-only --ignore-scripts --no-audit --no-fund"
+            exit 1
+          )
+
+      - name: Install dependencies and cache node_modules
+        if: steps.detect.outputs.has-package == 'true'
+        id: setup-deps
+        uses: ./.github/actions/node-setup-cache
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+  lint:
+    name: ✨ Lint Code
+    if: needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [setup]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore dependencies
+        uses: ./.github/actions/node-restore-cache
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+          cache-key: ${{ needs.setup.outputs.cache-key }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run linting
+        run: npm run lint --if-present
+
+  typecheck:
+    name: 🔎 Typecheck
+    if: needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [setup]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore dependencies
+        uses: ./.github/actions/node-restore-cache
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+          cache-key: ${{ needs.setup.outputs.cache-key }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+  test:
+    name: 🧪 Test & Coverage
+    if: needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [setup]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore dependencies
+        uses: ./.github/actions/node-restore-cache
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+          cache-key: ${{ needs.setup.outputs.cache-key }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      # `npm run x --if-present` exits 0 when x is missing, so `|| npm test`
+      # would never run; pick the script explicitly instead.
+      - name: Test with coverage
+        shell: bash
+        run: |
+          if [ -n "$(node -p "require('./package.json').scripts?.['test:coverage'] ?? ''")" ]; then
+            npm run test:coverage
+          else
+            npm test --if-present
+          fi
+
+      - name: Enforce coverage threshold (>=80%)
+        shell: bash
+        run: |
+          set -euo pipefail
+          MIN=80
+
+          if [ -f coverage/coverage-final.json ]; then
+            rm -rf .nyc_output
+            mkdir -p .nyc_output
+            cp coverage/coverage-final.json .nyc_output/out.json
+            set +e
+            echo "Running nyc check-coverage (threshold ${MIN}%)..."
+            npx --yes nyc check-coverage --lines=$MIN --statements=$MIN --functions=$MIN --branches=$MIN
+            EXIT=$?
+            set -e
+            echo "Running nyc report (text-summary)..."
+            NYC_REPORT="$(npx --yes nyc report --reporter=text-summary 2>&1)"
+            echo "$NYC_REPORT"
+            STMT=$(echo "$NYC_REPORT" | sed -n 's/^Statements[^:]*: *\([0-9.]*\)%.*/\1/p')
+            BRANCH=$(echo "$NYC_REPORT" | sed -n 's/^Branches[^:]*: *\([0-9.]*\)%.*/\1/p')
+            FN=$(echo "$NYC_REPORT" | sed -n 's/^Functions[^:]*: *\([0-9.]*\)%.*/\1/p')
+            LINES=$(echo "$NYC_REPORT" | sed -n 's/^Lines[^:]*: *\([0-9.]*\)%.*/\1/p')
+            [ -z "$STMT" ] && STMT="—"; [ -z "$BRANCH" ] && BRANCH="—"; [ -z "$FN" ] && FN="—"; [ -z "$LINES" ] && LINES="—"
+            [ $EXIT -eq 0 ] && ICON="✅ PASS" || ICON="❌ FAIL"
+            SRC="coverage-final.json"
+
+            {
+              echo "## Coverage Summary"
+              echo ""
+              echo "| Scope | Status | Threshold | Statements | Branches | Functions | Lines | Source | Gate |"
+              echo "|---|---|---:|---:|---:|---:|---:|---|---|"
+              echo "| Repo | ${ICON} | ${MIN}% | ${STMT}% | ${BRANCH}% | ${FN}% | ${LINES}% | ${SRC} | NYC check-coverage |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            exit $EXIT
+          else
+            echo "::error::No coverage report found (expected coverage-final.json)."
+            exit 1
+          fi
+
+  build:
+    name: 🏗️ Build & Bundle
+    if: needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [setup]
+    permissions:
+      contents: read
+    outputs:
+      build-ran: ${{ steps.build-gate.outputs.build-ran }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect build script
+        id: build-gate
+        shell: bash
+        run: |
+          if node -e "const s=require('./package.json').scripts||{}; process.exit(s.build?0:1)"; then
+            echo "build-ran=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build-ran=false" >> "$GITHUB_OUTPUT"
+            echo "No \`build\` script in package.json; skipping build and bundle report."
+          fi
+
+      - name: Restore dependencies
+        if: steps.build-gate.outputs.build-ran == 'true'
+        uses: ./.github/actions/node-restore-cache
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+          cache-key: ${{ needs.setup.outputs.cache-key }}
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build and bundle size report
+        if: steps.build-gate.outputs.build-ran == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_LOG="${RUNNER_TEMP}/build.log"
+          npm run build 2>&1 | tee "${BUILD_LOG}"
+          {
+            echo "## Build report"
+            echo ""
+            echo '```text'
+            sed 's/\x1b\[[0-9;]*m//g' "${BUILD_LOG}" | tail -n 80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if node -e "const s=require('./package.json').scripts||{}; process.exit(s.size?0:1)"; then
+            {
+              echo ""
+              echo "## Bundle Size Report"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            set +e
+            npm run size -- --markdown 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload build log for summary job
+        if: always() && steps.build-gate.outputs.build-ran == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-build-log
+          path: ${{ runner.temp }}/build.log
+          retention-days: 1
+          if-no-files-found: ignore
+
+  summary:
+    name: 📋 CI Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [security_checks, setup, lint, typecheck, test, build]
+    if: always() && !cancelled()
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download build log
+        if: always() && needs.build.outputs.build-ran == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: ci-build-log
+
+      - name: Write job summary
+        env:
+          R_SECURITY: ${{ needs.security_checks.result }}
+          R_SETUP: ${{ needs.setup.result }}
+          R_LINT: ${{ needs.lint.result }}
+          R_TYPECHECK: ${{ needs.typecheck.result }}
+          R_TEST: ${{ needs.test.result }}
+          R_BUILD: ${{ needs.build.result }}
+          BUILD_RAN: ${{ needs.build.outputs.build-ran }}
+          LOCKFILE_OUTCOME: ${{ needs.setup.outputs.lockfile-outcome }}
+          REF_NAME: ${{ github.head_ref || github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          ic() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              cancelled) echo "🚫" ;;
+              skipped) echo "⏭️" ;;
+              *) echo "❔" ;;
+            esac
+          }
+          if [ "${LOCKFILE_OUTCOME}" = "failure" ]; then
+            {
+              echo "## ❌ Lockfile consistency check failed"
+              echo ""
+              echo "\`package-lock.json\` is out of sync with \`package.json\`. **Install and caching were not run.**"
+              echo ""
+              echo "**Fix:**"
+              echo '```bash'
+              echo "npm install --package-lock-only --ignore-scripts --no-audit --no-fund"
+              echo '```'
+              echo ""
+              echo "See the **Setup Dependencies** job → **Lockfile consistency check** step for details."
+              echo ""
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo "## 📊 CI Checks summary"
+            echo ""
+            echo "### 🏷️ Run"
+            echo "- **Event:** ${EVENT}"
+            echo "- **Branch:** \`${REF_NAME}\`"
+            echo ""
+            echo "### 📌 Commit"
+            echo "- **SHA:** \`$(git rev-parse HEAD)\`"
+            echo "- **Message:** $(git log -1 --pretty=format:'%s')"
+            echo "- **Author:** $(git log -1 --pretty=format:'%an <%ae>')"
+            echo "- **Date:** $(git log -1 --pretty=format:'%ad' --date=short)"
+            echo ""
+            if [ "${BUILD_RAN}" = "true" ]; then
+              R_BUILD_DISPLAY="${R_BUILD}"
+            else
+              R_BUILD_DISPLAY="skipped"
+            fi
+            echo "### 🎯 Job results"
+            echo "| Job | Result |"
+            echo "|-----|--------|"
+            echo "| 📦 Setup | $(ic "${R_SETUP}") \`${R_SETUP}\` |"
+            echo "| 🔐 Security checks | $(ic "${R_SECURITY}") \`${R_SECURITY}\` |"
+            echo "| ✨ Lint | $(ic "${R_LINT}") \`${R_LINT}\` |"
+            echo "| 🔎 Typecheck | $(ic "${R_TYPECHECK}") \`${R_TYPECHECK}\` |"
+            echo "| 🧪 Test & coverage | $(ic "${R_TEST}") \`${R_TEST}\` |"
+            echo "| 🏗️ Build & bundle | $(ic "${R_BUILD_DISPLAY}") \`${R_BUILD_DISPLAY}\` |"
+            echo ""
+            if [ "${BUILD_RAN}" = "true" ] && [ -f build.log ]; then
+              echo "### 🏗️ Build output"
+              echo ""
+              echo '```text'
+              sed 's/\x1b\[[0-9;]*m//g' build.log | tail -n 80
+              echo '```'
+              echo ""
+            fi
+            echo "### ✅ What ran"
+            echo "- **One \`npm ci\` per workflow** in setup; downstream jobs restore \`node_modules\` from cache"
+            echo "- **PR:** dependency review + \`npm audit\` / \`audit-ci\` (reuse cached deps)"
+            echo "- **All events:** parallel lint, typecheck, test$([ "${BUILD_RAN}" = "true" ] && echo ", build" || echo "")"
+            echo "- NYC coverage gate (≥80%) when \`coverage-final.json\` is produced"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Required status check for the merge ruleset. GitHub treats a skipped
+  # required check as passing, so this runs always() and fails explicitly
+  # when any job failed or was cancelled.
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [security_checks, setup, lint, typecheck, test, build]
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: ${RESULTS}"
+          for r in ${RESULTS}; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::A required CI job finished with '${r}'"; exit 1 ;;
+            esac
+          done

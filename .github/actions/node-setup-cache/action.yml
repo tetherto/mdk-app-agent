@@ -1,0 +1,89 @@
+name: Node.js setup with node_modules cache
+description: Restore node_modules by lockfile fingerprint; npm ci only on a cache miss; persist the cache on push (canonical) runs.
+
+inputs:
+  node-version:
+    description: Node.js version (e.g. 20.x or lts/*)
+    required: true
+  install-dependencies:
+    description: Run npm ci on a cache miss before saving
+    required: false
+    default: 'true'
+  working-directory:
+    description: Directory containing package.json and package-lock.json (use . for repo root)
+    required: false
+    default: '.'
+
+outputs:
+  cache-key:
+    description: Cache key for node-restore-cache (shared lockfile-fingerprint key)
+    value: ${{ steps.cache-keys.outputs.cache-key }}
+  cache-hit:
+    description: Whether node_modules was restored from cache
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Generate cache keys
+      id: cache-keys
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.working-directory }}
+      run: |
+        NODE_VERSION="${{ inputs.node-version }}"
+        WD="${PKG_DIR:-.}"
+        if [ "$WD" = "." ]; then
+          SLUG="root"; LOCK="package-lock.json"; PKG="package.json"; NM="node_modules"
+        else
+          SLUG="${WD//\//-}"; LOCK="${WD}/package-lock.json"; PKG="${WD}/package.json"; NM="${WD}/node_modules"
+        fi
+        # Shared fingerprint key (no PR/ref scope): a push to the default branch
+        # writes it; every PR (fork included, read access is allowed) restores the
+        # SAME key and gets an exact hit when the lockfile is unchanged, so no
+        # reinstall/token is needed. Only a changed lockfile (new fingerprint)
+        # misses. Keeping the key scope-free is what lets fork PRs reuse it.
+        FINGERPRINT=""
+        [ -f "$LOCK" ] && FINGERPRINT+=$(sha256sum "$LOCK" | awk '{print $1}')
+        [ -f "$PKG" ] && FINGERPRINT+=$(sha256sum "$PKG" | awk '{print $1}')
+        [ -z "$FINGERPRINT" ] && FINGERPRINT="no-lock"
+        HASH_KEY="node-modules-${{ runner.os }}-${NODE_VERSION}-${SLUG}-${FINGERPRINT:0:24}"
+        echo "cache-key=${HASH_KEY}" >> "$GITHUB_OUTPUT"
+        echo "node-modules-path=${NM}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore node_modules cache
+      id: cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.cache-keys.outputs.node-modules-path }}
+        key: ${{ steps.cache-keys.outputs.cache-key }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install dependencies
+      if: inputs.install-dependencies == 'true' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        WD="${PKG_DIR:-.}"
+        if [ "$WD" != "." ]; then cd "$WD"; fi
+        if [ -f package-lock.json ]; then
+          npm ci --ignore-scripts --no-audit --no-fund
+        else
+          npm install --ignore-scripts --no-audit --no-fund
+        fi
+
+    # Persist only on push (canonical branch builds). Fork PRs can't write the
+    # base cache scope anyway, and restricting writes to push avoids the
+    # reservation race that concurrent PRs caused on a shared key.
+    - name: Save node_modules cache
+      if: github.event_name == 'push' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.cache-keys.outputs.node-modules-path }}
+        key: ${{ steps.cache-keys.outputs.cache-key }}

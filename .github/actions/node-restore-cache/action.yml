@@ -1,0 +1,75 @@
+name: Restore node_modules cache
+description: Restore node_modules from the exact key; on a miss, optionally authenticate private git deps (via setup-git-credentials, gated by enabled) and npm ci.
+
+inputs:
+  cache-key:
+    description: cache-key from node-setup-cache
+    required: true
+  node-version:
+    description: Node.js version (must match setup job)
+    required: true
+  working-directory:
+    description: Directory containing package.json (use . for repo root)
+    required: false
+    default: '.'
+  enabled:
+    description: When 'true', authenticate private git deps before a fallback npm ci.
+    required: false
+    default: 'false'
+  app-id:
+    required: false
+    default: ''
+  private-key:
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve node_modules path
+      id: paths
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.working-directory }}
+      run: |
+        WD="${PKG_DIR:-.}"
+        if [ "$WD" = "." ]; then
+          echo "node-modules-path=node_modules" >> "$GITHUB_OUTPUT"
+        else
+          echo "node-modules-path=${WD}/node_modules" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Restore node_modules cache
+      id: cache-node-modules
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.node-modules-path }}
+        key: ${{ inputs.cache-key }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Configure git auth for private dependencies
+      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      uses: ./.github/actions/setup-git-credentials
+      with:
+        enabled: ${{ inputs.enabled }}
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.private-key }}
+
+    - name: Install dependencies
+      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        PKG_DIR: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        WD="${PKG_DIR:-.}"
+        if [ "$WD" != "." ]; then cd "$WD"; fi
+        if [ -f package-lock.json ]; then
+          npm ci --ignore-scripts --no-audit --no-fund
+        else
+          npm install --ignore-scripts --no-audit --no-fund
+        fi
