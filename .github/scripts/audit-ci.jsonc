@@ -3,6 +3,10 @@
   "high": true,
   "allowlist": [
     // Internal package installed from git (github.com/tetherto/tether-wrk-base); GHSA is a false positive for that source.
-    "GHSA-wvh9-3hgj-7f22"
+    "GHSA-wvh9-3hgj-7f22",
+    // @fastify/static <=10.1.1 via @tetherto/mdk-gateway -> @tetherto/svc-facs-httpd 2.0.1 (pins ^9).
+    // Fix is 10.1.2+, a major bump upstream; remove once mdk-gateway ships it.
+    "GHSA-8pvw-jcv7-9cmj",
+    "GHSA-83w8-p2f5-377r"
   ]
 }
