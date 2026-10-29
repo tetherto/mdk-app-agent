@@ -3,7 +3,7 @@
 const crypto = require('crypto')
 
 const { config } = require('@tetherto/mdk-gateway/plugin')
-const { EVENT, AgentEventSchema, isTerminal } = require('@tetherto/mdk-agent')
+const { EVENT, AgentEventSchema, isTerminal } = require('@tetherto/mdk/backend/core/agent')
 const store = require('../lib/sessions')
 const approvals = require('../lib/approvals')
 const sse = require('../lib/sse')
