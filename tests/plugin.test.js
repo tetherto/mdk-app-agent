@@ -4,7 +4,7 @@ const test = require('brittle')
 const path = require('path')
 const { EventEmitter } = require('events')
 const { loadPlugin } = require('@tetherto/mdk-gateway/workers/lib/plugin-loader')
-const { EVENT } = require('@tetherto/mdk/backend/core/agent')
+const { EVENT } = require('@tetherto/mdk-agent')
 
 const PLUGIN_DIR = path.resolve(__dirname, '..')
 const APPROVAL_TIMEOUT_MS = 60

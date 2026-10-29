@@ -97,7 +97,7 @@ resume order, the timeout-rejects path, and per-identity isolation across sessio
 | ------------------------------ | --------------------------------- | ---------------------------- |
 | Sessions and messages work, but the agent never calls a tool | `agent.mcp` (or its `url`) is omitted | Set `agent.mcp.url` to a reachable MCP server. [`createAgent`][mdk-agent] only connects to MCP when `config.mcp.url` is set, and without it the agent runs as a grounded chat with no fleet tools. |
 | Same symptom, but `agent.mcp.url` is set correctly | The MCP tool server was still starting, or unreachable, at the exact moment the session was created; the agent connects to MCP once, at session create, and never retries later in that session's life | Confirm the tool server is up, then create a new session; restarting or messaging the existing session does not retry the connection |
-| `npm ci` fails fetching `@tetherto/mdk` | `@tetherto/mdk-agent` is not on npm, so the app installs it from the `tetherto/mdk` GitHub repo (a git dependency) and loads `@tetherto/mdk/backend/core/agent` | Allow npm to fetch from GitHub (npm 12 also needs `allow-git` set) |
+| `npm ci` fails to resolve a stack that mounts only this app | `@tetherto/mdk-app-agent` declares `@tetherto/mdk-agent` as a required dependency, not an optional peer | Install `@tetherto/mdk-agent` alongside the app so `npm ci` can resolve it |
 
 ## Develop
 
