@@ -1,10 +1,9 @@
 {
   "name": "@tetherto/mdk-app-agent",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "MDK agent app: auth-gated chat sessions, SSE streams and approval round-trips behind the Gateway.",
   "author": "Tether",
   "license": "Apache-2.0",
-  "private": true,
   "engines": {
     "node": ">=24"
   },
@@ -18,9 +17,9 @@
     "@ai-sdk/openai-compatible": "^3.0.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@qvac/ai-sdk-provider": "^0.6.1",
-    "@tetherto/mdk-gateway": "^0.12.0",
+    "@tetherto/mdk-gateway": "0.13.0",
+    "@tetherto/mdk-agent": "0.13.0",
     "ai": "^7.0.0",
-    "mdk": "git+https://github.com/tetherto/mdk.git#v0.12.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {
