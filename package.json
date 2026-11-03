@@ -7,6 +7,13 @@
   "engines": {
     "node": ">=24"
   },
+  "files": [
+    "controllers/",
+    "lib/",
+    "mdk-app.yaml",
+    "mdk-plugin.json",
+    "README.md"
+  ],
   "scripts": {
     "lint": "standard",
     "lint:fix": "standard --fix",
