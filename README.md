@@ -42,7 +42,7 @@ The manifest's `setup` block asks for these values, read from `config.agent` at 
 | ------------------------- | -------- | -------- | -------- | ----------------------------------------------------------------------- |
 | `agent.provider`          | Required | `object` | None     | The model the agent talks to, per the [provider shape](#provider-shape) |
 | `agent.mcp`               | Optional | `object` | None     | The MCP tool server the agent calls fleet tools through. Omitting this, or its `url`, still loads the app: the agent runs as a grounded chat with no fleet tools, and [why that happens](#troubleshooting) has its own entry. |
-| `agent.approvalTimeoutMs` | Optional | `number` | `120000` | How long a paused write waits for a decision before it resolves to rejected |
+| `agent.approvalTimeoutMs` | Optional | `number` | `120000` | How long a paused write waits for a decision. With none, the write does not run. With `@tetherto/mdk-agent` 0.13.1 or later the agent reports the approval as expired; the 0.13.0 agent reports it as rejected |
 
 ### Provider shape
 
@@ -69,7 +69,7 @@ MCP tool server run elsewhere.
 | ----------------------- | ------------------------------------------------ | ------------------------------------ |
 | `agent.session.create`  | `POST /agent/sessions`                           |                                      |
 | `agent.session.message` | `POST /agent/sessions/:id/messages`              | `text/event-stream`; events carry `turnId`, `seq`, and `approvalId` on `pending_approval` |
-| `agent.approval.decide` | `POST /agent/sessions/:id/approvals/:approvalId` | Fail-safe timeout resolves to reject |
+| `agent.approval.decide` | `POST /agent/sessions/:id/approvals/:approvalId` | Fail-safe timeout: the write does not run (reported as expired from `@tetherto/mdk-agent` 0.13.1) |
 | `agent.session.delete`  | `DELETE /agent/sessions/:id`                     |                                      |
 
 Sessions bind to the caller's identity: the `kind:sub` of the token the Gateway verified against `spec.rbac` (so a user and a
@@ -79,7 +79,7 @@ A session id and its approvals are only reachable by the identity that created t
 forbidden, so existence never leaks.
 
 [`tests/plugin.test.js`](tests/plugin.test.js) is the executable spec for this contract: envelope stamping, the approval pause and
-resume order, the timeout-rejects path, and per-identity isolation across sessions and approvals.
+resume order, the timeout path (write blocked, reported as expired), and per-identity isolation across sessions and approvals.
 
 ## Errors
 
@@ -88,7 +88,7 @@ resume order, the timeout-rejects path, and per-identity isolation across sessio
 | `ERR_AGENT_UNAVAILABLE`           | `config.agent` is missing entirely, or the agent failed to construct: a bad provider config, or the MCP server was unreachable at startup (`503`) | Add the `agent` block to this app's config, or fix the provider or MCP config the underlying error names |
 | `ERR_AGENT_SESSION_NOT_FOUND`     | The session id doesn't exist, or belongs to a different caller than the one making the request (`404`) | Create a new session, or confirm you're using the identity that created this one |
 | `ERR_AGENT_TURN_ACTIVE`           | A message or delete is sent to a session while its previous turn is still streaming or paused on an approval (`409`) | Wait for the current turn to finish, or decide its pending approval, before sending another |
-| `ERR_AGENT_APPROVAL_NOT_FOUND`    | The approval id doesn't exist for that session: already decided, timed out, or never existed (`404`) | Check whether it already resolved; approvals also auto-reject after `agent.approvalTimeoutMs` |
+| `ERR_AGENT_APPROVAL_NOT_FOUND`    | The approval id doesn't exist for that session: already decided, timed out, or never existed (`404`) | Check whether it already resolved; approvals also expire after `agent.approvalTimeoutMs`, and the write does not run |
 | `ERR_AGENT_MESSAGE_TEXT_REQUIRED` | `agent.session.message`'s `text` field is missing, not a string, or empty after trimming (`400`) | Send a non-empty `text` string |
 
 ## Troubleshooting

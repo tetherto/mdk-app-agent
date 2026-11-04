@@ -14,7 +14,8 @@ const APPROVAL_TIMEOUT_MS = config.agent?.approvalTimeoutMs || 120000
 // deliberately does not: turnId, per-turn monotonic seq, approvalId only on
 // pending_approval. Exactly one terminal event (done | error), always last.
 // A client that disconnects ends the turn: the model call is aborted, a pending
-// approval is rejected, and the generator is returned at the next event.
+// approval resolves with no decision (the write never runs), and the generator is
+// returned at the next event, so no tool_result is sent for it.
 module.exports = async function postMessage (req, res) {
   const entry = store.get(req.params.id, store.callerId(req))
   if (entry.busy) throw Object.assign(new Error('ERR_AGENT_TURN_ACTIVE'), { statusCode: 409 })

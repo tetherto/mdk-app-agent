@@ -26,7 +26,8 @@ function scriptedSession (events, record) {
             yield { type: EVENT.TOKEN, text: 'Rebooted.' }
             yield { type: EVENT.DONE, text: 'Rebooted.' }
           } else {
-            yield { type: EVENT.TOOL_RESULT, name: ev.name, text: '(rejected by operator — not executed)' }
+            const text = approved == null ? '(no operator decision — approval expired, not executed)' : '(rejected by operator — not executed)'
+            yield { type: EVENT.TOOL_RESULT, name: ev.name, text }
             yield { type: EVENT.TOKEN, text: 'Not executed.' }
             yield { type: EVENT.DONE }
           }
@@ -45,10 +46,10 @@ function loadAgentPlugin (events, record, opts = {}) {
         approvalTimeoutMs: opts.approvalTimeoutMs || APPROVAL_TIMEOUT_MS,
         // async, like the real createAgent's createSession — a synchronous double
         // let a missing `await` in the controller pass every test in this file.
-        factory: async () => ({ createSession: async () => opts.session || scriptedSession(events, record) })
+        factory: async () => ({ ...opts.agent, createSession: async () => opts.session || scriptedSession(events, record) })
       })
     }),
-    logger: { error () {}, warn () {}, info () {}, debug () {} },
+    logger: opts.logger || { error () {}, warn () {}, info () {}, debug () {} },
     dataProxy: {}
   })
   const plugin = loadPlugin(PLUGIN_DIR, context)
@@ -239,10 +240,12 @@ test('agent plugin - no decision inside the window means reject', async (t) => {
   const res = makeRes()
   await message(makeReq('op-a', CHAT_WRITE, { params: { id: sessionId }, body: { text: 'reboot it' } }), res)
 
-  t.is(record.approved, false, 'timeout resolves the approval to false')
+  t.is(record.approved, null, 'timeout resolves the approval to null (no decision), not false (rejected)')
   t.absent(record.writeInvoked, 'write tool never ran')
   const frames = parseFrames(res)
-  t.ok(frames.find(f => f.type === 'tool_result').data.text.includes('rejected'), 'reject path taken')
+  const result = frames.find(f => f.type === 'tool_result').data.text
+  t.ok(result.includes('approval expired'), 'reported as expired')
+  t.absent(result.includes('rejected'), 'not as an operator rejection')
   t.is(frames[frames.length - 1].type, 'done', 'turn terminates')
 
   const pending = frames.find(f => f.type === 'pending_approval')
@@ -462,4 +465,19 @@ test('agent plugin - a Gateway token identity ({ kind, sub }) owns its sessions'
   await message(as('ankit@example.com', { params: { id: sessionId }, body: { text: 'hi' } }), res)
   t.is(parseFrames(res).pop().type, 'done')
   await t.exception(message(as('someone-else', { params: { id: sessionId }, body: { text: 'hi' } }), makeRes()), /ERR_AGENT_SESSION_NOT_FOUND/)
+})
+
+test('agent plugin - tools withheld by strict gating are logged when the agent is created', async (t) => {
+  const warnings = []
+  const logger = { error () {}, info () {}, debug () {}, warn: (...args) => warnings.push(args.join(' ')) }
+  const { create } = loadAgentPlugin(PLAIN_TURN, {}, {
+    logger,
+    agent: { tools: [{ name: 'get_site_overview' }], skipped: [{ name: 'site_summary', reason: 'not agent-enabled' }] }
+  })
+
+  await create(makeReq('op-a', CHAT))
+
+  t.is(warnings.length, 1, 'one warning for the whole skipped set')
+  t.ok(warnings[0].includes('site_summary (not agent-enabled)'), 'names the tool and why it was skipped')
+  t.ok(warnings[0].includes('strictToolGating'), 'points at the setting that admits it')
 })
