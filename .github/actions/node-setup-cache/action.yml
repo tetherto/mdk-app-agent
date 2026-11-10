@@ -3,8 +3,13 @@ description: Restore node_modules by lockfile fingerprint; npm ci only on a cach
 
 inputs:
   node-version:
-    description: Node.js version (e.g. 20.x or lts/*)
-    required: true
+    description: Node.js version (e.g. 20.x or lts/*). Overrides node-version-file.
+    required: false
+    default: ''
+  node-version-file:
+    description: File holding the Node.js version (lts/* when missing).
+    required: false
+    default: '.nvmrc'
   install-dependencies:
     description: Run npm ci on a cache miss before saving
     required: false
@@ -25,13 +30,20 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Setup Node.js
+      id: node
+      uses: ./.github/actions/setup-node-version
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version-file }}
+
     - name: Generate cache keys
       id: cache-keys
       shell: bash
       env:
         PKG_DIR: ${{ inputs.working-directory }}
+        NODE_MAJOR: ${{ steps.node.outputs.node-major }}
       run: |
-        NODE_VERSION="${{ inputs.node-version }}"
         WD="${PKG_DIR:-.}"
         if [ "$WD" = "." ]; then
           SLUG="root"; LOCK="package-lock.json"; PKG="package.json"; NM="node_modules"
@@ -47,7 +59,7 @@ runs:
         [ -f "$LOCK" ] && FINGERPRINT+=$(sha256sum "$LOCK" | awk '{print $1}')
         [ -f "$PKG" ] && FINGERPRINT+=$(sha256sum "$PKG" | awk '{print $1}')
         [ -z "$FINGERPRINT" ] && FINGERPRINT="no-lock"
-        HASH_KEY="node-modules-${{ runner.os }}-${NODE_VERSION}-${SLUG}-${FINGERPRINT:0:24}"
+        HASH_KEY="node-modules-${{ runner.os }}-node${NODE_MAJOR}-${SLUG}-${FINGERPRINT:0:24}"
         echo "cache-key=${HASH_KEY}" >> "$GITHUB_OUTPUT"
         echo "node-modules-path=${NM}" >> "$GITHUB_OUTPUT"
 
@@ -57,11 +69,6 @@ runs:
       with:
         path: ${{ steps.cache-keys.outputs.node-modules-path }}
         key: ${{ steps.cache-keys.outputs.cache-key }}
-
-    - name: Setup Node.js
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-      with:
-        node-version: ${{ inputs.node-version }}
 
     - name: Install dependencies
       if: inputs.install-dependencies == 'true' && steps.cache.outputs.cache-hit != 'true'

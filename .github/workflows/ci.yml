@@ -14,9 +14,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: "lts/*"
-
 jobs:
   security_checks:
     name: 🔐 Security Checks
@@ -48,7 +45,6 @@ jobs:
           app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
           cache-key: ${{ needs.setup.outputs.cache-key }}
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Security audit
         run: |
@@ -142,7 +138,6 @@ jobs:
         if: steps.detect.outputs.has-package == 'true'
         uses: ./.github/actions/setup-runtime
         with:
-          node_version: ${{ env.NODE_VERSION }}
           package_manager: npm
           cache_dependency_path: package-lock.json
 
@@ -167,8 +162,6 @@ jobs:
         if: steps.detect.outputs.has-package == 'true'
         id: setup-deps
         uses: ./.github/actions/node-setup-cache
-        with:
-          node-version: ${{ env.NODE_VERSION }}
 
   lint:
     name: ✨ Lint Code
@@ -191,7 +184,6 @@ jobs:
           app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
           cache-key: ${{ needs.setup.outputs.cache-key }}
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Run linting
         run: npm run lint --if-present
@@ -217,7 +209,6 @@ jobs:
           app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
           cache-key: ${{ needs.setup.outputs.cache-key }}
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Typecheck
         run: npm run typecheck --if-present
@@ -243,7 +234,6 @@ jobs:
           app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
           cache-key: ${{ needs.setup.outputs.cache-key }}
-          node-version: ${{ env.NODE_VERSION }}
 
       # `npm run x --if-present` exits 0 when x is missing, so `|| npm test`
       # would never run; pick the script explicitly instead.
@@ -331,7 +321,6 @@ jobs:
           app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
           private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
           cache-key: ${{ needs.setup.outputs.cache-key }}
-          node-version: ${{ env.NODE_VERSION }}
 
       - name: Build and bundle size report
         if: steps.build-gate.outputs.build-ran == 'true'
