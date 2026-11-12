@@ -25,9 +25,6 @@ inputs:
     default: ''
 
 outputs:
-  node-version:
-    description: The resolved version spec handed to setup-node
-    value: ${{ steps.resolve.outputs.node-version }}
   node-major:
     description: Major version of the installed Node.js (e.g. 24)
     value: ${{ steps.major.outputs.node-major }}
@@ -35,7 +32,9 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Resolve Node.js version
+    # Picks which setup-node input to use; setup-node parses the file itself.
+    # Exactly one is set, since setup-node prefers node-version when both are.
+    - name: Resolve Node.js version source
       id: resolve
       shell: bash
       env:
@@ -43,20 +42,20 @@ runs:
         NODE_VERSION_FILE: ${{ inputs.node-version-file }}
       run: |
         set -euo pipefail
-        VERSION="$NODE_VERSION"
-        if [ -z "$VERSION" ] && [ -f "$NODE_VERSION_FILE" ]; then
-          VERSION=$(tr -d '[:space:]' < "$NODE_VERSION_FILE")
+        if [ -n "$NODE_VERSION" ]; then
+          echo "node-version=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
+        elif [ -s "$NODE_VERSION_FILE" ]; then
+          echo "node-version-file=${NODE_VERSION_FILE}" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::setup-node-version: '${NODE_VERSION_FILE}' is missing or empty; falling back to lts/*."
+          echo "node-version=lts/*" >> "$GITHUB_OUTPUT"
         fi
-        if [ -z "$VERSION" ]; then
-          VERSION="lts/*"
-          echo "::warning::setup-node-version: no version in '${NODE_VERSION_FILE}'; falling back to lts/*."
-        fi
-        echo "node-version=${VERSION}" >> "$GITHUB_OUTPUT"
 
     - name: Setup Node.js
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ steps.resolve.outputs.node-version }}
+        node-version-file: ${{ steps.resolve.outputs.node-version-file }}
         cache: ${{ inputs.cache }}
         cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
