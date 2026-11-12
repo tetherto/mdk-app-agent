@@ -3,8 +3,13 @@ description: Setup Node runtime and package manager cache for CI jobs.
 
 inputs:
   node_version:
-    description: Node.js version or range (for example lts/*).
-    required: true
+    description: Node.js version or range (for example lts/*). Overrides node_version_file.
+    required: false
+    default: ""
+  node_version_file:
+    description: File holding the Node.js version (.nvmrc when empty).
+    required: false
+    default: ""
   package_manager:
     description: Package manager to configure cache for (npm or pnpm).
     required: true
@@ -26,8 +31,9 @@ runs:
         version: ${{ inputs.pnpm_version }}
 
     - name: Setup Node.js
-      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      uses: ./.github/actions/setup-node-version
       with:
         node-version: ${{ inputs.node_version }}
+        node-version-file: ${{ inputs.node_version_file }}
         cache: ${{ inputs.package_manager }}
         cache-dependency-path: ${{ inputs.cache_dependency_path }}

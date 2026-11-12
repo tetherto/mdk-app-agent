@@ -1,0 +1,76 @@
+name: Setup Node.js from .nvmrc
+description: >-
+  Install the Node.js version the repo pins in `node-version-file` (.nvmrc),
+  falling back to lts/* with a warning when the file is missing, so a new LTS
+  never changes CI without a commit. `node-version` overrides both (e.g. a
+  version matrix). Outputs the installed major, which cache keys should carry
+  instead of the version spec: `lts/*` stays the same string when LTS moves.
+
+inputs:
+  node-version:
+    description: Explicit Node.js version; overrides node-version-file.
+    required: false
+    default: ''
+  node-version-file:
+    description: File holding the Node.js version (.nvmrc when empty).
+    required: false
+    default: ''
+  cache:
+    description: Package manager whose cache setup-node should configure (e.g. npm).
+    required: false
+    default: ''
+  cache-dependency-path:
+    description: Lockfile path for setup-node's package manager cache.
+    required: false
+    default: ''
+
+outputs:
+  node-major:
+    description: Major version of the installed Node.js (e.g. 24)
+    value: ${{ steps.major.outputs.node-major }}
+
+runs:
+  using: composite
+  steps:
+    # Picks which setup-node input to use; setup-node parses the file itself.
+    # Exactly one is set, since setup-node prefers node-version when both are.
+    - name: Resolve Node.js version source
+      id: resolve
+      shell: bash
+      env:
+        NODE_VERSION: ${{ inputs.node-version }}
+        NODE_VERSION_FILE: ${{ inputs.node-version-file || '.nvmrc' }}
+      run: |
+        set -euo pipefail
+        if [ -n "$NODE_VERSION" ]; then
+          echo "node-version=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
+        elif [ -s "$NODE_VERSION_FILE" ]; then
+          echo "node-version-file=${NODE_VERSION_FILE}" >> "$GITHUB_OUTPUT"
+        else
+          # A warning, not an error, on purpose: this action is copied into repos
+          # that may not pin Node yet, and those keep building on lts/*.
+          echo "::warning::setup-node-version: '${NODE_VERSION_FILE}' is missing or empty; falling back to lts/*."
+          echo "node-version=lts/*" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Setup Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ steps.resolve.outputs.node-version }}
+        node-version-file: ${{ steps.resolve.outputs.node-version-file }}
+        cache: ${{ inputs.cache }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+    - name: Read installed Node.js major
+      id: major
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Fail rather than emit an empty major: cache keys carry it, and an empty
+        # one would let every Node version share the same node_modules.
+        MAJOR=$(node -p "process.versions.node.split('.')[0]")
+        if [ -z "$MAJOR" ]; then
+          echo "::error::setup-node-version: could not read the installed Node.js major."
+          exit 1
+        fi
+        echo "node-major=${MAJOR}" >> "$GITHUB_OUTPUT"
