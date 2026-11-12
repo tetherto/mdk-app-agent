@@ -355,6 +355,64 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # Node x npm compatibility: a clean install, the tests and the build on every
+  # pairing users may run. Node 24 x npm 11 (the pinned .nvmrc and the npm it
+  # ships) blocks; the other legs report without blocking until they are green.
+  compat:
+    name: 🧬 Node ${{ matrix.node }} × npm ${{ matrix.npm }}
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && needs.setup.outputs.has-package == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [setup]
+    continue-on-error: ${{ !matrix.blocking }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24, 26]
+        npm: [10, 11, 12]
+        include:
+          - node: 24
+            npm: 11
+            blocking: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-node-version
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install npm ${{ matrix.npm }}
+        shell: bash
+        env:
+          NPM_MAJOR: ${{ matrix.npm }}
+        run: |
+          set -euo pipefail
+          npm install -g "npm@${NPM_MAJOR}" --no-audit --no-fund
+          echo "node $(node --version), npm $(npm --version)"
+
+      - name: Configure git auth for private dependencies
+        uses: ./.github/actions/setup-git-credentials
+        with:
+          enabled: ${{ vars.ENABLE_APP_TOKEN != '' }}
+          app-id: ${{ secrets.MININGOS_READ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MININGOS_READ_APP_PRIVATE_KEY }}
+
+      # No node_modules cache: the install under this npm is what the leg tests.
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npm test --if-present
+
+      - name: Build
+        run: npm run build --if-present
+
   summary:
     name: 📋 CI Summary
     runs-on: ubuntu-latest
@@ -464,7 +522,7 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [security_checks, setup, lint, typecheck, test, build]
+    needs: [security_checks, setup, lint, typecheck, test, build, compat]
     if: always()
     permissions:
       contents: read
