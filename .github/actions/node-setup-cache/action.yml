@@ -7,9 +7,9 @@ inputs:
     required: false
     default: ''
   node-version-file:
-    description: File holding the Node.js version (lts/* when missing).
+    description: File holding the Node.js version (.nvmrc when empty).
     required: false
-    default: '.nvmrc'
+    default: ''
   install-dependencies:
     description: Run npm ci on a cache miss before saving
     required: false

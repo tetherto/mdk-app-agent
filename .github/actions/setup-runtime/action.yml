@@ -7,9 +7,9 @@ inputs:
     required: false
     default: ""
   node_version_file:
-    description: File holding the Node.js version (lts/* when missing).
+    description: File holding the Node.js version (.nvmrc when empty).
     required: false
-    default: ".nvmrc"
+    default: ""
   package_manager:
     description: Package manager to configure cache for (npm or pnpm).
     required: true

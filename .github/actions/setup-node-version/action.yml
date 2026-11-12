@@ -12,9 +12,9 @@ inputs:
     required: false
     default: ''
   node-version-file:
-    description: File holding the Node.js version.
+    description: File holding the Node.js version (.nvmrc when empty).
     required: false
-    default: '.nvmrc'
+    default: ''
   cache:
     description: Package manager whose cache setup-node should configure (e.g. npm).
     required: false
@@ -39,7 +39,7 @@ runs:
       shell: bash
       env:
         NODE_VERSION: ${{ inputs.node-version }}
-        NODE_VERSION_FILE: ${{ inputs.node-version-file }}
+        NODE_VERSION_FILE: ${{ inputs.node-version-file || '.nvmrc' }}
       run: |
         set -euo pipefail
         if [ -n "$NODE_VERSION" ]; then
@@ -47,6 +47,8 @@ runs:
         elif [ -s "$NODE_VERSION_FILE" ]; then
           echo "node-version-file=${NODE_VERSION_FILE}" >> "$GITHUB_OUTPUT"
         else
+          # A warning, not an error, on purpose: this action is copied into repos
+          # that may not pin Node yet, and those keep building on lts/*.
           echo "::warning::setup-node-version: '${NODE_VERSION_FILE}' is missing or empty; falling back to lts/*."
           echo "node-version=lts/*" >> "$GITHUB_OUTPUT"
         fi
@@ -62,4 +64,13 @@ runs:
     - name: Read installed Node.js major
       id: major
       shell: bash
-      run: echo "node-major=$(node -p "process.versions.node.split('.')[0]")" >> "$GITHUB_OUTPUT"
+      run: |
+        set -euo pipefail
+        # Fail rather than emit an empty major: cache keys carry it, and an empty
+        # one would let every Node version share the same node_modules.
+        MAJOR=$(node -p "process.versions.node.split('.')[0]")
+        if [ -z "$MAJOR" ]; then
+          echo "::error::setup-node-version: could not read the installed Node.js major."
+          exit 1
+        fi
+        echo "node-major=${MAJOR}" >> "$GITHUB_OUTPUT"

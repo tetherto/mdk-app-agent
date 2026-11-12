@@ -6,13 +6,13 @@ inputs:
     description: cache-key from node-setup-cache
     required: true
   node-version:
-    description: Node.js version (must match setup job). Overrides node-version-file.
+    description: Node.js version. Overrides node-version-file.
     required: false
     default: ''
   node-version-file:
-    description: File holding the Node.js version (lts/* when missing).
+    description: File holding the Node.js version (.nvmrc when empty).
     required: false
-    default: '.nvmrc'
+    default: ''
   working-directory:
     description: Directory containing package.json (use . for repo root)
     required: false
