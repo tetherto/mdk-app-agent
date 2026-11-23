@@ -11,9 +11,9 @@
     },
     {
       "key": "agent.mcp",
-      "prompt": "MCP tool server the agent calls fleet tools through (JSON; `mdk run mcp` listens on the Gateway port + 100. Edit or Enter to accept)",
+      "prompt": "MCP tool server the agent calls fleet tools through (JSON; `mdk run mcp` listens on the Gateway port + 100 and needs the agent's service account: create it with `mdk sa add operator-agent` once the stack runs, and set gatewayUrl to this stack's Gateway. Drop `credential` for an MCP server that checks no token. Edit or Enter to accept)",
       "type": "json",
-      "default": "{\"url\":\"http://127.0.0.1:3947/mcp\"}"
+      "default": "{\"url\":\"http://127.0.0.1:3947/mcp\",\"credential\":{\"file\":\".mdk/credentials/agents/operator-agent.json\",\"gatewayUrl\":\"http://127.0.0.1:3847\"}}"
     },
     {
       "key": "agent.approvalTimeoutMs",
