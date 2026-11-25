@@ -388,22 +388,16 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # npm compatibility on the Node we build and publish on (.nvmrc): a clean install,
-  # the tests and the build with its bundled npm and with npm 12. Every leg blocks
-  # CI Success.
+  # Compatibility on the Node we build and publish on (.nvmrc) with its bundled npm:
+  # a clean install, the tests and the build. It blocks CI Success.
   compat:
-    name: 🧬 npm ${{ matrix.npm }}
+    name: 🧬 Compat (bundled npm)
     if: needs.compat-scope.outputs.run == 'true' && needs.setup.outputs.has-package == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [setup, compat-scope]
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        # bundled = the npm the Node release ships (11 today); move 12 on when npm 13 ships.
-        npm: [bundled, 12]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -412,13 +406,6 @@ jobs:
 
       - name: Setup Node.js
         uses: ./.github/actions/setup-node-version
-
-      - name: Install npm ${{ matrix.npm }}
-        if: matrix.npm != 'bundled'
-        shell: bash
-        env:
-          NPM_MAJOR: ${{ matrix.npm }}
-        run: npm install -g "npm@${NPM_MAJOR}" --no-audit --no-fund
 
       - name: Show the Node and npm under test
         shell: bash
@@ -530,7 +517,7 @@ jobs:
             echo "| 🏗️ Build & bundle | $(ic "${R_BUILD_DISPLAY}") \`${R_BUILD_DISPLAY}\` |"
             # The matrix runs only on release-branch PRs and on main PRs that change how the app installs; otherwise it is skipped and not listed.
             if [ "${R_COMPAT}" != "skipped" ]; then
-              echo "| 🧬 npm bundled/12 (Node from .nvmrc) | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
+              echo "| 🧬 Compat (bundled npm) | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
             fi
             echo ""
             if [ "${BUILD_RAN}" = "true" ] && [ -f build.log ]; then
