@@ -6,16 +6,12 @@ on:
   pull_request:
     branches: [main, develop, staging, "release/**"]
     types: [opened, reopened, synchronize]
-  schedule:
-    # 03:00 UTC nightly on main, so a new Node or npm release shows up in compat.
-    - cron: "0 3 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  # The event keeps a push to main from cancelling the nightly run on main.
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -359,22 +355,55 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
-  # Node x npm compatibility: a clean install, the tests and the build on every
-  # pairing users may run, on PRs into main or a release branch and nightly. Every
-  # leg blocks CI Success.
+  # The compat matrix runs on every PR into a release branch, and on PRs into main
+  # only when they change how the app installs: a manifest, lockfile, .npmrc,
+  # .nvmrc or this workflow.
+  compat-scope:
+    name: 🧬 Compat scope
+    if: github.event_name == 'pull_request' && (github.base_ref == 'main' || startsWith(github.base_ref, 'release/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - name: Decide whether to run
+        id: scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ "$BASE_REF" == release/* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          FILES=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')
+          if grep -qE '(^|/)package(-lock)?\.json$|(^|/)\.(npmrc|nvmrc)$|^\.github/workflows/ci\.yml$' <<<"$FILES"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # npm compatibility on the Node we build and publish on (.nvmrc): a clean install,
+  # the tests and the build with its bundled npm and with npm 12. Every leg blocks
+  # CI Success.
   compat:
-    name: 🧬 Node ${{ matrix.node }} × npm ${{ matrix.npm }}
-    if: (github.event_name == 'schedule' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || startsWith(github.base_ref, 'release/')))) && needs.setup.outputs.has-package == 'true'
+    name: 🧬 npm ${{ matrix.npm }}
+    if: needs.compat-scope.outputs.run == 'true' && needs.setup.outputs.has-package == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: [setup]
+    needs: [setup, compat-scope]
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        node: [24, 26]
-        npm: [10, 11, 12]
+        # bundled = the npm the Node release ships (11 today); move 12 on when npm 13 ships.
+        npm: [bundled, 12]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -383,17 +412,17 @@ jobs:
 
       - name: Setup Node.js
         uses: ./.github/actions/setup-node-version
-        with:
-          node-version: ${{ matrix.node }}
 
       - name: Install npm ${{ matrix.npm }}
+        if: matrix.npm != 'bundled'
         shell: bash
         env:
           NPM_MAJOR: ${{ matrix.npm }}
-        run: |
-          set -euo pipefail
-          npm install -g "npm@${NPM_MAJOR}" --no-audit --no-fund
-          echo "node $(node --version), npm $(npm --version)"
+        run: npm install -g "npm@${NPM_MAJOR}" --no-audit --no-fund
+
+      - name: Show the Node and npm under test
+        shell: bash
+        run: echo "node $(node --version), npm $(npm --version)"
 
       - name: Configure git auth for private dependencies
         uses: ./.github/actions/setup-git-credentials
@@ -499,9 +528,9 @@ jobs:
             echo "| 🔎 Typecheck | $(ic "${R_TYPECHECK}") \`${R_TYPECHECK}\` |"
             echo "| 🧪 Test & coverage | $(ic "${R_TEST}") \`${R_TEST}\` |"
             echo "| 🏗️ Build & bundle | $(ic "${R_BUILD_DISPLAY}") \`${R_BUILD_DISPLAY}\` |"
-            # The matrix runs only on PRs into main or a release branch and nightly; elsewhere it is skipped and not listed.
+            # The matrix runs only on release-branch PRs and on main PRs that change how the app installs; otherwise it is skipped and not listed.
             if [ "${R_COMPAT}" != "skipped" ]; then
-              echo "| 🧬 Node 24/26 × npm 10/11/12 | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
+              echo "| 🧬 npm bundled/12 (Node from .nvmrc) | $(ic "${R_COMPAT}") \`${R_COMPAT}\` |"
             fi
             echo ""
             if [ "${BUILD_RAN}" = "true" ] && [ -f build.log ]; then
@@ -526,7 +555,7 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [security_checks, setup, lint, typecheck, test, build, compat]
+    needs: [security_checks, setup, lint, typecheck, test, build, compat-scope, compat]
     if: always()
     permissions:
       contents: read
