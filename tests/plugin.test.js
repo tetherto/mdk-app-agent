@@ -196,7 +196,7 @@ test('agent plugin - approve resumes tool_result -> token -> done and runs the w
   await streaming
   const frames = parseFrames(res)
   t.alike(frames.map(f => f.type), ['token', 'tool_call', 'pending_approval', 'tool_result', 'token', 'done'], 'resume order tool_result -> token -> done')
-  t.is(record.approved, true, 'library iterator received approved=true')
+  t.alike(record.approved, { approved: true, by: 'op-a' }, 'library iterator received the approval, naming the operator')
   t.ok(record.writeInvoked, 'write tool ran')
   t.alike(frames.map(f => f.data.seq), [0, 1, 2, 3, 4, 5], 'seq monotonic across the pause')
   t.is(frames.filter(f => 'approvalId' in f.data).length, 1, 'approvalId only on pending_approval')
@@ -225,6 +225,22 @@ test('agent plugin - an approval by a verified identity names it; a rejection st
     await streaming
     t.alike(record.approved, approved ? { approved: true, by: 'ops@example.com' } : false, `approved: ${approved}`)
     t.is(Boolean(record.writeInvoked), approved, 'the write runs only when approved')
+  }
+})
+
+test('agent plugin - the user of an older authVerifier is named too; the local operator is not', async (t) => {
+  const local = (extra = {}) => ({ params: extra.params || {}, query: {}, body: extra.body || {}, headers: {}, _info: {} })
+  for (const [req, expected] of [[(extra) => makeReq('op-a', CHAT_WRITE, extra), { approved: true, by: 'op-a' }], [local, true]]) {
+    const record = {}
+    const { create, message, approve } = loadAgentPlugin(WRITE_TURN, record)
+    const { sessionId } = await create(req())
+    const res = makeRes()
+    const streaming = message(req({ params: { id: sessionId }, body: { text: 'reboot antminer-3' } }), res)
+    await waitFor(() => res.frames.some(f => f.startsWith('event: pending_approval')))
+    const pending = parseFrames(res).find(f => f.type === 'pending_approval')
+    await approve(req({ params: { id: sessionId, approvalId: pending.data.approvalId }, body: { approved: true } }))
+    await streaming
+    t.alike(record.approved, expected)
   }
 })
 

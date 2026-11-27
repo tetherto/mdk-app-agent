@@ -101,7 +101,9 @@ with neither serves a single `local` operator, so every caller shares one identi
 A session id and its approvals are only reachable by the identity that created them; a foreign id reads as missing rather than
 forbidden, so existence never leaks.
 
-An approval by an identity the Gateway verified is passed to the agent as `{ approved: true, by: '<sub>' }`. An
+An approval by an identity the Gateway verified is passed to the agent as `{ approved: true, by: '<sub>' }`: the token's `sub`,
+else an older `authVerifier`'s user id. `by` is the bare `sub`, without the `kind:` the session binding adds, because the
+Kernel's command log names its callers that way and the two then line up there. An
 `@tetherto/mdk-agent` release that takes this form sends `by` with the write, and the Kernel's write-command log then records it as
 `approvedBy` beside the agent's service account. The 0.14.0 agent reads the object as an approval and names nobody. The `local`
 operator of a Gateway that verifies no token is never named.
