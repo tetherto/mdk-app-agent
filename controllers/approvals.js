@@ -6,6 +6,6 @@ const approvals = require('../lib/approvals')
 module.exports = async function decideApproval (req) {
   store.get(req.params.id, store.callerId(req))
   const approved = req.body?.approved === true
-  approvals.decide(req.params.id, req.params.approvalId, approved)
+  approvals.decide(req.params.id, req.params.approvalId, approved, store.callerSub(req))
   return { approvalId: req.params.approvalId, approved }
 }
