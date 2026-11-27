@@ -211,6 +211,23 @@ test('agent plugin - approve resumes tool_result -> token -> done and runs the w
   }
 })
 
+test('agent plugin - an approval by a verified identity names it; a rejection stays a plain false', async (t) => {
+  const verified = (extra) => ({ ...makeReq('ignored', CHAT_WRITE, extra), _info: { kind: 'user', sub: 'ops@example.com' } })
+  for (const approved of [true, false]) {
+    const record = {}
+    const { create, message, approve } = loadAgentPlugin(WRITE_TURN, record)
+    const { sessionId } = await create(verified())
+    const res = makeRes()
+    const streaming = message(verified({ params: { id: sessionId }, body: { text: 'reboot antminer-3' } }), res)
+    await waitFor(() => res.frames.some(f => f.startsWith('event: pending_approval')))
+    const pending = parseFrames(res).find(f => f.type === 'pending_approval')
+    await approve(verified({ params: { id: sessionId, approvalId: pending.data.approvalId }, body: { approved } }))
+    await streaming
+    t.alike(record.approved, approved ? { approved: true, by: 'ops@example.com' } : false, `approved: ${approved}`)
+    t.is(Boolean(record.writeInvoked), approved, 'the write runs only when approved')
+  }
+})
+
 test('agent plugin - approved:false rejects the write and still terminates cleanly', async (t) => {
   const record = {}
   const { create, message, approve } = loadAgentPlugin(WRITE_TURN, record)

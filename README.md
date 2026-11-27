@@ -92,7 +92,7 @@ MCP tool server run elsewhere.
 | ----------------------- | ------------------------------------------------ | ------------------------------------ |
 | `agent.session.create`  | `POST /agent/sessions`                           |                                      |
 | `agent.session.message` | `POST /agent/sessions/:id/messages`              | `text/event-stream`; events carry `turnId`, `seq`, and `approvalId` on `pending_approval` |
-| `agent.approval.decide` | `POST /agent/sessions/:id/approvals/:approvalId` | Fail-safe timeout: the write does not run (reported as expired from `@tetherto/mdk-agent` 0.13.1) |
+| `agent.approval.decide` | `POST /agent/sessions/:id/approvals/:approvalId` | Fail-safe timeout: the write does not run (reported as expired from `@tetherto/mdk-agent` 0.13.1). An approval names the identity the Gateway verified |
 | `agent.session.delete`  | `DELETE /agent/sessions/:id`                     |                                      |
 
 Sessions bind to the caller's identity: the `kind:sub` of the token the Gateway verified against `spec.rbac` (so a user and a
@@ -100,6 +100,11 @@ service account with the same name never share sessions), else an older `authVer
 with neither serves a single `local` operator, so every caller shares one identity.
 A session id and its approvals are only reachable by the identity that created them; a foreign id reads as missing rather than
 forbidden, so existence never leaks.
+
+An approval by an identity the Gateway verified is passed to the agent as `{ approved: true, by: '<sub>' }`. An
+`@tetherto/mdk-agent` release that takes this form sends `by` with the write, and the Kernel's write-command log then records it as
+`approvedBy` beside the agent's service account. The 0.14.0 agent reads the object as an approval and names nobody. The `local`
+operator of a Gateway that verifies no token is never named.
 
 [`tests/plugin.test.js`](tests/plugin.test.js) is the executable spec for this contract: envelope stamping, the approval pause and
 resume order, the timeout path (write blocked, reported as expired), and per-identity isolation across sessions and approvals.
